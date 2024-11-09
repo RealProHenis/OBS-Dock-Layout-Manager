@@ -33,11 +33,11 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.obs-dock-resizer"
+            "bundleId": "com.example.obs-plugintemplate"
         }
     },
-    "name": "obs-dock-resizer",
-    "displayName": "OBS Dock Resizer",
+    "name": "obs-plugintemplate",
+    "displayName": "OBS Plugin Template",
     "version": "1.0.0",
     "author": "Your Name Here",
     "website": "https://example.com",
