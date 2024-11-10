@@ -13,6 +13,7 @@ OBS Auto Dock Resizer
 #include <QListWidget>
 #include <QPushButton>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QByteArray>
 #include <QApplication>
 #include <QDockWidget>
@@ -40,38 +41,42 @@ public:
         : QDialog(parent)
     {
         setWindowTitle("Dock Layout Manager");
-        resize(500, 350); // Increased size to accommodate the new buttons
+        resize(400, 300);
 
         QVBoxLayout *layout = new QVBoxLayout(this);
 
-        // Add the list widget at the top
+        // Initialize the list widget
         list_widget = new QListWidget(this);
+        list_widget->setSelectionMode(QAbstractItemView::SingleSelection);
         layout->addWidget(list_widget);
+
+        // Install event filter on the list widget's viewport
+        list_widget->viewport()->installEventFilter(this);
 
         // Add a horizontal layout for the buttons
         QHBoxLayout *buttonLayout = new QHBoxLayout;
 
-        // Add the New Layout button
-        QPushButton *newButton = new QPushButton("New Layout", this);
+        // Initialize buttons and add to layout
+        QPushButton *newButton = new QPushButton("New", this);
         connect(newButton, &QPushButton::clicked, this, &DockListDialog::newDockLayout);
         buttonLayout->addWidget(newButton);
 
-        // Add the Save Layout button
-        saveButton = new QPushButton("Save Dock Layout", this);
+        saveButton = new QPushButton("Save", this);
         connect(saveButton, &QPushButton::clicked, this, &DockListDialog::saveDockLayout);
         buttonLayout->addWidget(saveButton);
 
-        // Add the Restore Layout button
-        restoreButton = new QPushButton("Restore Dock Layout", this);
+        restoreButton = new QPushButton("Restore", this);
         connect(restoreButton, &QPushButton::clicked, this, &DockListDialog::restoreDockLayout);
         buttonLayout->addWidget(restoreButton);
 
-        // Add the Delete Layout button
-        deleteButton = new QPushButton("Delete Dock Layout", this);
+        renameButton = new QPushButton("Rename", this);
+        connect(renameButton, &QPushButton::clicked, this, &DockListDialog::renameDockLayout);
+        buttonLayout->addWidget(renameButton);
+
+        deleteButton = new QPushButton("Delete", this);
         connect(deleteButton, &QPushButton::clicked, this, &DockListDialog::deleteDockLayout);
         buttonLayout->addWidget(deleteButton);
 
-        // Add the Set as Default button
         setDefaultButton = new QPushButton("Set as Default", this);
         connect(setDefaultButton, &QPushButton::clicked, this, &DockListDialog::setAsDefaultLayout);
         buttonLayout->addWidget(setDefaultButton);
@@ -90,6 +95,21 @@ public:
 
         // Initialize the buttons' states
         updateButtonStates();
+    }
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override
+    {
+        if (obj == list_widget->viewport() && event->type() == QEvent::MouseButtonPress) {
+            QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            QModelIndex clickedIndex = list_widget->indexAt(mouseEvent->pos());
+            if (!clickedIndex.isValid()) {
+                list_widget->clearSelection();
+                updateButtonStates();
+                return true; // Event has been handled
+            }
+        }
+        return QDialog::eventFilter(obj, event);
     }
 
 private slots:
@@ -122,22 +142,17 @@ private slots:
 
             list_widget->addItem(item);
         }
-
-        if (layoutNames.isEmpty() || (layoutNames.size() == 1 && layoutNames.contains("Settings"))) {
-            QListWidgetItem *noLayoutItem = new QListWidgetItem("No saved layouts", list_widget);
-            noLayoutItem->setFlags(noLayoutItem->flags() & ~Qt::ItemIsSelectable);
-        }
     }
 
     void updateButtonStates()
     {
-        QListWidgetItem *currentItem = list_widget->currentItem();
-        bool validSelection = currentItem && currentItem->text() != "No saved layouts";
+        bool validSelection = !list_widget->selectedItems().isEmpty();
 
         saveButton->setEnabled(validSelection);
         restoreButton->setEnabled(validSelection);
         deleteButton->setEnabled(validSelection);
         setDefaultButton->setEnabled(validSelection);
+        renameButton->setEnabled(validSelection); // Enable/disable Rename button
     }
 
     void saveDockLayout()
@@ -150,17 +165,14 @@ private slots:
             return;
         }
 
-        QListWidgetItem *currentItem = list_widget->currentItem();
-        QString layoutName;
-
-        if (currentItem && currentItem->text() != "No saved layouts") {
-            layoutName = currentItem->text();
-
-            layoutName = layoutName.trimmed(); // Remove any extra whitespace
+        QList<QListWidgetItem *> selectedItems = list_widget->selectedItems();
+        if (!selectedItems.isEmpty()) {
+            QString layoutName = selectedItems.first()->text().trimmed();
 
             // Confirm overwrite
             QMessageBox::StandardButton reply;
-            reply = QMessageBox::question(this, "Overwrite Layout", QString("Are you sure you want to overwrite the layout '%1'?").arg(layoutName),
+            reply = QMessageBox::question(this, "Overwrite Layout",
+                                        QString("Are you sure you want to overwrite the '%1' layout?").arg(layoutName),
                                         QMessageBox::Yes | QMessageBox::No);
 
             if (reply != QMessageBox::Yes) {
@@ -186,8 +198,6 @@ private slots:
 
             settings.sync(); // Ensure changes are written to disk
 
-            QMessageBox::information(this, "Success", QString("Dock layout '%1' saved successfully").arg(layoutName));
-
             updateDockList(); // Update the list to reflect changes
         } else {
             // No layout selected, prompt the user to select a layout
@@ -206,131 +216,111 @@ private slots:
             return;
         }
 
-        QListWidgetItem *currentItem = list_widget->currentItem();
+        QList<QListWidgetItem *> selectedItems = list_widget->selectedItems();
 
-        if (!currentItem) {
-            QMessageBox::warning(this, "Error", "Please select a layout to restore");
-            return;
-        }
+        if (!selectedItems.isEmpty()) {
+            QString layoutName = selectedItems.first()->text();
 
-        QString layoutName = currentItem->text();
+            QSettings settings(settingsFilePath, QSettings::IniFormat);
+            settings.beginGroup(layoutName);
+            QByteArray windowState = settings.value("WindowState").toByteArray();
+            settings.endGroup();
 
-        if (layoutName == "No saved layouts") {
-            QMessageBox::warning(this, "Error", "No saved layouts to restore");
-            return;
-        }
-
-        QSettings settings(settingsFilePath, QSettings::IniFormat);
-        settings.beginGroup(layoutName);
-        QByteArray windowState = settings.value("WindowState").toByteArray();
-        settings.endGroup();
-
-        if (!windowState.isEmpty()) {
-            if (!main_window->restoreState(windowState)) {
-                QMessageBox::warning(this, "Error", "Failed to restore dock layout");
+            if (!windowState.isEmpty()) {
+                if (!main_window->restoreState(windowState)) {
+                    QMessageBox::warning(this, "Error", "Failed to restore dock layout");
+                    return;
+                }
+            } else {
+                QMessageBox::warning(this, "Error", "Selected layout does not contain valid window state");
                 return;
             }
         } else {
-            QMessageBox::warning(this, "Error", "Selected layout does not contain valid window state");
+            QMessageBox::warning(this, "Error", "Please select a layout to restore");
             return;
         }
-
-        QMessageBox::information(this, "Success", "Dock layout restored successfully");
     }
 
     void deleteDockLayout()
     {
-        QListWidgetItem *currentItem = list_widget->currentItem();
+        QList<QListWidgetItem *> selectedItems = list_widget->selectedItems();
 
-        if (!currentItem) {
+        if (!selectedItems.isEmpty()) {
+            QString layoutName = selectedItems.first()->text();
+
+            QMessageBox::StandardButton reply;
+            reply = QMessageBox::question(this, "Delete Layout",
+                                        QString("Are you sure you want to delete the '%1' layout?").arg(layoutName),
+                                        QMessageBox::Yes | QMessageBox::No);
+
+            if (reply != QMessageBox::Yes) {
+                return;
+            }
+
+            QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+            // Check if the deleted layout is the default
+            settings.beginGroup("Settings");
+            QString defaultLayoutName = settings.value("DefaultLayout").toString();
+            if (defaultLayoutName == layoutName) {
+                settings.remove("DefaultLayout");
+            }
+            settings.endGroup();
+
+            // Remove the entire group corresponding to the layout
+            settings.remove(layoutName);
+
+            settings.sync(); // Ensure changes are written to disk
+
+            updateDockList();
+        } else {
             QMessageBox::warning(this, "Error", "Please select a layout to delete");
             return;
         }
-
-        QString layoutName = currentItem->text();
-
-        if (layoutName == "No saved layouts") {
-            QMessageBox::warning(this, "Error", "No saved layouts to delete");
-            return;
-        }
-
-        QMessageBox::StandardButton reply;
-        reply = QMessageBox::question(this, "Delete Layout", QString("Are you sure you want to delete the layout '%1'?").arg(layoutName),
-                                      QMessageBox::Yes | QMessageBox::No);
-
-        if (reply != QMessageBox::Yes) {
-            return;
-        }
-
-        QSettings settings(settingsFilePath, QSettings::IniFormat);
-
-        // Check if the deleted layout is the default
-        settings.beginGroup("Settings");
-        QString defaultLayoutName = settings.value("DefaultLayout").toString();
-        if (defaultLayoutName == layoutName) {
-            settings.remove("DefaultLayout");
-        }
-        settings.endGroup();
-
-        // Remove the entire group corresponding to the layout
-        settings.remove(layoutName);
-
-        settings.sync(); // Ensure changes are written to disk
-
-        QMessageBox::information(this, "Success", "Dock layout deleted successfully");
-
-        updateDockList();
     }
 
     void setAsDefaultLayout()
     {
-        QListWidgetItem *currentItem = list_widget->currentItem();
+        QList<QListWidgetItem *> selectedItems = list_widget->selectedItems();
 
-        if (!currentItem) {
+        if (!selectedItems.isEmpty()) {
+            QString layoutName = selectedItems.first()->text();
+
+            // Save the current window state to the selected layout
+            void *main_window_handle = obs_frontend_get_main_window();
+            QMainWindow *main_window = static_cast<QMainWindow *>(main_window_handle);
+
+            if (!main_window) {
+                QMessageBox::warning(this, "Error", "Failed to get main window");
+                return;
+            }
+
+            QByteArray windowState = main_window->saveState();
+
+            if (windowState.isEmpty()) {
+                QMessageBox::warning(this, "Error", "Failed to save window state. Ensure that the main window state is valid.");
+                return;
+            }
+
+            QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+            settings.beginGroup(layoutName);
+            settings.setValue("WindowState", windowState);
+            settings.endGroup(); // layoutName
+
+            settings.sync(); // Ensure changes are written to disk
+
+            // Now set this layout as the default
+            settings.beginGroup("Settings");
+            settings.setValue("DefaultLayout", layoutName);
+            settings.endGroup();
+            settings.sync(); // Ensure changes are written to disk
+
+            updateDockList();
+        } else {
             QMessageBox::warning(this, "Error", "Please select a layout to set as default");
             return;
         }
-
-        QString layoutName = currentItem->text();
-
-        if (layoutName == "No saved layouts") {
-            QMessageBox::warning(this, "Error", "No saved layouts to set as default");
-            return;
-        }
-
-        // Save the current window state to the selected layout
-        void *main_window_handle = obs_frontend_get_main_window();
-        QMainWindow *main_window = static_cast<QMainWindow *>(main_window_handle);
-
-        if (!main_window) {
-            QMessageBox::warning(this, "Error", "Failed to get main window");
-            return;
-        }
-
-        QByteArray windowState = main_window->saveState();
-
-        if (windowState.isEmpty()) {
-            QMessageBox::warning(this, "Error", "Failed to save window state. Ensure that the main window state is valid.");
-            return;
-        }
-
-        QSettings settings(settingsFilePath, QSettings::IniFormat);
-
-        settings.beginGroup(layoutName);
-        settings.setValue("WindowState", windowState);
-        settings.endGroup(); // layoutName
-
-        settings.sync(); // Ensure changes are written to disk
-
-        // Now set this layout as the default
-        settings.beginGroup("Settings");
-        settings.setValue("DefaultLayout", layoutName);
-        settings.endGroup();
-        settings.sync(); // Ensure changes are written to disk
-
-        QMessageBox::information(this, "Success", QString("Layout '%1' set as default").arg(layoutName));
-
-        updateDockList();
     }
 
     void newDockLayout()
@@ -361,17 +351,86 @@ private slots:
 
         settings.sync(); // Ensure changes are written to disk
 
-        QMessageBox::information(this, "Success", QString("New layout '%1' created successfully").arg(newLayoutName));
-
         updateDockList();
     }
 
+    // *** New slot for renaming a layout ***
+    void renameDockLayout()
+    {
+        QList<QListWidgetItem *> selectedItems = list_widget->selectedItems();
+
+        if (selectedItems.isEmpty()) {
+            QMessageBox::warning(this, "Error", "Please select a layout to rename.");
+            return;
+        }
+
+        QString oldName = selectedItems.first()->text();
+
+        bool ok;
+        QString newName = QInputDialog::getText(this, "Rename Layout",
+                                                QString("Enter a new name for the '%1' layout:").arg(oldName),
+                                                QLineEdit::Normal, oldName, &ok);
+
+        if (!ok || newName.isEmpty()) {
+            return; // User cancelled or entered an empty name
+        }
+
+        newName = newName.trimmed();
+
+        if (newName == oldName) {
+            // No change in name
+            return;
+        }
+
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+        // Check if the new name already exists
+        QStringList existingLayouts = settings.childGroups();
+        existingLayouts.removeAll("Settings"); // Exclude the Settings group
+        if (existingLayouts.contains(newName)) {
+            QMessageBox::warning(this, "Error", QString("A layout with the name '%1' already exists. Please choose a different name.").arg(newName));
+            return;
+        }
+
+        // Retrieve the window state from the old layout
+        settings.beginGroup(oldName);
+        QByteArray windowState = settings.value("WindowState").toByteArray();
+        settings.endGroup();
+
+        if (windowState.isEmpty()) {
+            QMessageBox::warning(this, "Error", QString("The '%1' layout does not contain a valid window state.").arg(oldName));
+            return;
+        }
+
+        // Create the new layout group with the same window state
+        settings.beginGroup(newName);
+        settings.setValue("WindowState", windowState);
+        settings.endGroup();
+
+        // Remove the old layout group
+        settings.remove(oldName);
+
+        // If the old layout was the default, update the default to the new name
+        settings.beginGroup("Settings");
+        QString defaultLayoutName = settings.value("DefaultLayout").toString();
+        if (defaultLayoutName == oldName) {
+            settings.setValue("DefaultLayout", newName);
+        }
+        settings.endGroup();
+
+        settings.sync(); // Ensure changes are written to disk
+
+        updateDockList();
+    }
+    // *** End of renameDockLayout slot ***
+
 private:
     QListWidget *list_widget;
-    QPushButton *saveButton;       // Member variable for "Save Dock Layout"
-    QPushButton *restoreButton;    // Member variable for "Restore Dock Layout"
-    QPushButton *deleteButton;     // Member variable for "Delete Dock Layout"
-    QPushButton *setDefaultButton; // Member variable for "Set as Default"
+    QPushButton *saveButton;
+    QPushButton *restoreButton;
+    QPushButton *deleteButton;
+    QPushButton *setDefaultButton;
+    QPushButton *renameButton; // New Rename button
 };
 
 #include "plugin-main.moc"
