@@ -5,18 +5,19 @@ OBS Auto Dock Resizer
 #include <obs-module.h>
 #include <obs-frontend-api.h>
 #include <QMainWindow>
-#include <QDockWidget>
+#include <QDialog>
 #include <QWidget>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QListWidget>
-#include <QTimer>
 #include <QPushButton>
-#include <QFile>
-#include <QDir>
-#include <QStandardPaths>
 #include <QMessageBox>
 #include <QByteArray>
+#include <QApplication>
+#include <QDockWidget>
+#include <QSettings>
+#include <QInputDialog>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-auto-dock-resizer", "en-US")
@@ -24,37 +25,49 @@ OBS_MODULE_USE_DEFAULT_LOCALE("obs-auto-dock-resizer", "en-US")
 #define PLUGIN_NAME "OBS Auto Dock Resizer"
 #define PLUGIN_VERSION "1.0.0"
 
-class DockListWidget : public QWidget
+class DockListDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    DockListWidget(QWidget *parent = nullptr)
-        : QWidget(parent)
+    DockListDialog(QWidget *parent = nullptr)
+        : QDialog(parent)
     {
+        setWindowTitle("Dock Layout Manager");
+        resize(400, 300); // Optional: Set initial size
+
         QVBoxLayout *layout = new QVBoxLayout(this);
+
+        // Add the list widget at the top
+        list_widget = new QListWidget(this);
+        layout->addWidget(list_widget);
+
+        // Add a horizontal layout for the buttons
+        QHBoxLayout *buttonLayout = new QHBoxLayout;
 
         // Add the Save Layout button
         QPushButton *saveButton = new QPushButton("Save Dock Layout", this);
-        connect(saveButton, &QPushButton::clicked, this, &DockListWidget::saveDockLayout);
-        layout->addWidget(saveButton);
+        connect(saveButton, &QPushButton::clicked, this, &DockListDialog::saveDockLayout);
+        buttonLayout->addWidget(saveButton);
 
         // Add the Restore Layout button
         QPushButton *restoreButton = new QPushButton("Restore Dock Layout", this);
-        connect(restoreButton, &QPushButton::clicked, this, &DockListWidget::restoreDockLayout);
-        layout->addWidget(restoreButton);
+        connect(restoreButton, &QPushButton::clicked, this, &DockListDialog::restoreDockLayout);
+        buttonLayout->addWidget(restoreButton);
 
-        list_widget = new QListWidget(this);
-        layout->addWidget(list_widget);
+        // Add the Delete Layout button
+        QPushButton *deleteButton = new QPushButton("Delete Dock Layout", this);
+        connect(deleteButton, &QPushButton::clicked, this, &DockListDialog::deleteDockLayout);
+        buttonLayout->addWidget(deleteButton);
+
+        // Add the button layout to the main layout
+        layout->addLayout(buttonLayout);
+
+        // Set the main layout
         setLayout(layout);
 
         // Populate the list initially
         updateDockList();
-
-        // Set up a timer to refresh the list periodically (optional)
-        QTimer *timer = new QTimer(this);
-        connect(timer, &QTimer::timeout, this, &DockListWidget::updateDockList);
-        timer->start(2000); // Update every 2 seconds
     }
 
 private slots:
@@ -62,33 +75,16 @@ private slots:
     {
         list_widget->clear();
 
-        void *main_window_handle = obs_frontend_get_main_window();
-        QMainWindow *main_window = static_cast<QMainWindow *>(main_window_handle);
+        QSettings settings("OBS", "DockLayouts");
 
-        if (!main_window) {
-            list_widget->addItem("Failed to get main window");
-            return;
+        QStringList layoutNames = settings.childKeys();
+
+        for (const QString &name : layoutNames) {
+            list_widget->addItem(name);
         }
 
-        QList<QDockWidget *> docks = main_window->findChildren<QDockWidget *>();
-
-        for (QDockWidget *dock : docks) {
-            QString dock_name = dock->windowTitle();
-            if (dock_name.isEmpty()) {
-                dock_name = dock->objectName();
-            }
-
-            QSize size = dock->size();
-            QString item_text = QString("%1 - Size: %2 x %3")
-                                    .arg(dock_name)
-                                    .arg(size.width())
-                                    .arg(size.height());
-
-            list_widget->addItem(item_text);
-        }
-
-        if (docks.isEmpty()) {
-            list_widget->addItem("No docks found");
+        if (layoutNames.isEmpty()) {
+            list_widget->addItem("No saved layouts");
         }
     }
 
@@ -102,26 +98,22 @@ private slots:
             return;
         }
 
+        bool ok;
+        QString layoutName = QInputDialog::getText(this, "Save Dock Layout", "Enter a name for the layout:", QLineEdit::Normal, "", &ok);
+
+        if (!ok || layoutName.isEmpty()) {
+            return; // User cancelled or empty name
+        }
+
         QByteArray windowState = main_window->saveState();
 
-        QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QDir dir(configDir);
-        if (!dir.exists()) {
-            dir.mkpath(".");
-        }
+        QSettings settings("OBS", "DockLayouts");
 
-        QString filePath = dir.filePath("dock_layout.dat");
-
-        QFile file(filePath);
-        if (!file.open(QIODevice::WriteOnly)) {
-            QMessageBox::warning(this, "Error", "Failed to save dock layout");
-            return;
-        }
-
-        file.write(windowState);
-        file.close();
+        settings.setValue(layoutName, windowState);
 
         QMessageBox::information(this, "Success", "Dock layout saved successfully");
+
+        updateDockList(); // Update the list to include the new layout
     }
 
     void restoreDockLayout()
@@ -134,22 +126,28 @@ private slots:
             return;
         }
 
-        QString configDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-        QString filePath = QDir(configDir).filePath("dock_layout.dat");
+        QListWidgetItem *currentItem = list_widget->currentItem();
 
-        QFile file(filePath);
-        if (!file.exists()) {
-            QMessageBox::warning(this, "Error", "No saved dock layout found");
+        if (!currentItem) {
+            QMessageBox::warning(this, "Error", "Please select a layout to restore");
             return;
         }
 
-        if (!file.open(QIODevice::ReadOnly)) {
-            QMessageBox::warning(this, "Error", "Failed to open dock layout file for reading");
+        QString layoutName = currentItem->text();
+
+        if (layoutName == "No saved layouts") {
+            QMessageBox::warning(this, "Error", "No saved layouts to restore");
             return;
         }
 
-        QByteArray windowState = file.readAll();
-        file.close();
+        QSettings settings("OBS", "DockLayouts");
+
+        QByteArray windowState = settings.value(layoutName).toByteArray();
+
+        if (windowState.isEmpty()) {
+            QMessageBox::warning(this, "Error", "Failed to retrieve the saved layout");
+            return;
+        }
 
         if (!main_window->restoreState(windowState)) {
             QMessageBox::warning(this, "Error", "Failed to restore dock layout");
@@ -159,25 +157,73 @@ private slots:
         QMessageBox::information(this, "Success", "Dock layout restored successfully");
     }
 
+    void deleteDockLayout()
+    {
+        QListWidgetItem *currentItem = list_widget->currentItem();
+
+        if (!currentItem) {
+            QMessageBox::warning(this, "Error", "Please select a layout to delete");
+            return;
+        }
+
+        QString layoutName = currentItem->text();
+
+        if (layoutName == "No saved layouts") {
+            QMessageBox::warning(this, "Error", "No saved layouts to delete");
+            return;
+        }
+
+        QMessageBox::StandardButton reply;
+        reply = QMessageBox::question(this, "Delete Layout", QString("Are you sure you want to delete the layout '%1'?").arg(layoutName),
+                                      QMessageBox::Yes|QMessageBox::No);
+
+        if (reply != QMessageBox::Yes) {
+            return;
+        }
+
+        QSettings settings("OBS", "DockLayouts");
+
+        settings.remove(layoutName);
+
+        QMessageBox::information(this, "Success", "Dock layout deleted successfully");
+
+        updateDockList();
+    }
+
 private:
     QListWidget *list_widget;
 };
 
+#include "plugin-main.moc"
+
+// Global pointer to the dialog
+static DockListDialog *dockListDialog = nullptr;
+
+// Callback function for the Tools menu item
+void show_dock_layout_manager(void *)
+{
+    if (!dockListDialog) {
+        // Parent the dialog to the main OBS window
+        void *main_window_handle = obs_frontend_get_main_window();
+        QWidget *main_window = static_cast<QWidget *>(main_window_handle);
+
+        dockListDialog = new DockListDialog(main_window);
+        dockListDialog->setAttribute(Qt::WA_DeleteOnClose);
+        QObject::connect(dockListDialog, &QDialog::destroyed, []() {
+            dockListDialog = nullptr;
+        });
+    }
+    dockListDialog->show();
+    dockListDialog->raise();
+    dockListDialog->activateWindow();
+}
+
 bool obs_module_load(void)
 {
-    // Create our custom widget
-    DockListWidget *dock_widget = new DockListWidget;
-
-    // Register the dock using obs_frontend_add_dock_by_id
+    // Add the plugin to the Tools menu
     obs_frontend_push_ui_translation(obs_module_get_string);
-    bool success = obs_frontend_add_dock_by_id("obs_auto_dock_resizer_dock", "Dock List", dock_widget);
+    obs_frontend_add_tools_menu_item("Dock Layout Manager", show_dock_layout_manager, nullptr);
     obs_frontend_pop_ui_translation();
-
-    if (!success) {
-        blog(LOG_ERROR, "%s: Failed to add dock", PLUGIN_NAME);
-        delete dock_widget;
-        return false;
-    }
 
     blog(LOG_INFO, "%s plugin loaded successfully (version %s)", PLUGIN_NAME, PLUGIN_VERSION);
     return true;
@@ -185,9 +231,10 @@ bool obs_module_load(void)
 
 void obs_module_unload(void)
 {
-    // Remove the dock when the plugin is unloaded
-    obs_frontend_remove_dock("obs_auto_dock_resizer_dock");
+    if (dockListDialog) {
+        dockListDialog->close();
+        dockListDialog = nullptr;
+    }
+
     blog(LOG_INFO, "%s plugin unloaded", PLUGIN_NAME);
 }
-
-#include "plugin-main.moc" // Include the MOC file for Qt signals and slots
