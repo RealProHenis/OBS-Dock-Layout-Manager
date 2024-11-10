@@ -1,5 +1,5 @@
 /*
-OBS Auto Dock Resizer
+OBS Dock Layout Manager
 */
 
 #include <obs-module.h>
@@ -25,10 +25,10 @@ OBS Auto Dock Resizer
 #include <QFont>
 
 OBS_DECLARE_MODULE()
-OBS_MODULE_USE_DEFAULT_LOCALE("obs-auto-dock-resizer", "en-US")
+OBS_MODULE_USE_DEFAULT_LOCALE("obs-dock-layout-manager", "en-US")
 
-#define PLUGIN_NAME "OBS Auto Dock Resizer"
-#define PLUGIN_VERSION "1.1.4" // Update in 'buildspec.json' too
+#define PLUGIN_NAME "OBS Dock Layout Manager"
+#define PLUGIN_VERSION "1.1.5" // Update in 'buildspec.json' too
 
 static QString settingsFilePath; // Global variable for settings file path
 
@@ -350,9 +350,23 @@ private slots:
             return;
         }
 
-        // FIX: Create a new layout group and initialize it with an empty WindowState
+        // Retrieve the main window to capture the current window state
+        void *main_window_handle = obs_frontend_get_main_window();
+        QMainWindow *main_window = static_cast<QMainWindow *>(main_window_handle);
+
+        QByteArray windowState;
+        if (main_window) {
+            windowState = main_window->saveState();
+            if (windowState.isEmpty()) {
+                QMessageBox::warning(this, "Error", "Failed to save the current window state. The new layout will be created without a valid window state.");
+            }
+        } else {
+            QMessageBox::warning(this, "Error", "Failed to retrieve the main window. The new layout will be created without a valid window state.");
+        }
+
+        // Create a new layout group and initialize it with the captured WindowState
         settings.beginGroup(newLayoutName);
-        settings.setValue("WindowState", QByteArray()); // Initialize with empty WindowState
+        settings.setValue("WindowState", windowState);
         settings.endGroup();
 
         settings.sync(); // Ensure changes are written to disk

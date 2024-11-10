@@ -33,12 +33,12 @@
     },
     "platformConfig": {
         "macos": {
-            "bundleId": "com.example.obs-auto-dock-resizer"
+            "bundleId": "com.example.obs-dock-layout-manager"
         }
     },
-    "name": "obs-auto-dock-resizer",
-    "displayName": "OBS Auto Dock Resizer",
-    "version": "1.1.4",
+    "name": "obs-dock-layout-manager",
+    "displayName": "OBS Dock Layout Manager",
+    "version": "1.1.5",
     "author": "ProHenis",
     "website": "https://prohenis.com",
     "email": "henisbusiness@gmail.com",
