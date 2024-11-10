@@ -19,12 +19,17 @@ OBS Auto Dock Resizer
 #include <QSettings>
 #include <QInputDialog>
 #include <QTimer>
+#include <QFileInfo>
+#include <QDir>
+#include <QFont>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-auto-dock-resizer", "en-US")
 
 #define PLUGIN_NAME "OBS Auto Dock Resizer"
-#define PLUGIN_VERSION "1.1.3"
+#define PLUGIN_VERSION "1.1.3" // Update in 'buildspec.json' too
+
+static QString settingsFilePath; // Global variable for settings file path
 
 class DockListDialog : public QDialog
 {
@@ -35,7 +40,7 @@ public:
         : QDialog(parent)
     {
         setWindowTitle("Dock Layout Manager");
-        resize(400, 300); // Set initial size
+        resize(500, 350); // Increased size to accommodate the new buttons
 
         QVBoxLayout *layout = new QVBoxLayout(this);
 
@@ -46,23 +51,28 @@ public:
         // Add a horizontal layout for the buttons
         QHBoxLayout *buttonLayout = new QHBoxLayout;
 
+        // Add the New Layout button
+        QPushButton *newButton = new QPushButton("New Layout", this);
+        connect(newButton, &QPushButton::clicked, this, &DockListDialog::newDockLayout);
+        buttonLayout->addWidget(newButton);
+
         // Add the Save Layout button
-        QPushButton *saveButton = new QPushButton("Save Dock Layout", this);
+        saveButton = new QPushButton("Save Dock Layout", this);
         connect(saveButton, &QPushButton::clicked, this, &DockListDialog::saveDockLayout);
         buttonLayout->addWidget(saveButton);
 
         // Add the Restore Layout button
-        QPushButton *restoreButton = new QPushButton("Restore Dock Layout", this);
+        restoreButton = new QPushButton("Restore Dock Layout", this);
         connect(restoreButton, &QPushButton::clicked, this, &DockListDialog::restoreDockLayout);
         buttonLayout->addWidget(restoreButton);
 
         // Add the Delete Layout button
-        QPushButton *deleteButton = new QPushButton("Delete Dock Layout", this);
+        deleteButton = new QPushButton("Delete Dock Layout", this);
         connect(deleteButton, &QPushButton::clicked, this, &DockListDialog::deleteDockLayout);
         buttonLayout->addWidget(deleteButton);
 
         // Add the Set as Default button
-        QPushButton *setDefaultButton = new QPushButton("Set as Default", this);
+        setDefaultButton = new QPushButton("Set as Default", this);
         connect(setDefaultButton, &QPushButton::clicked, this, &DockListDialog::setAsDefaultLayout);
         buttonLayout->addWidget(setDefaultButton);
 
@@ -72,8 +82,14 @@ public:
         // Set the main layout
         setLayout(layout);
 
+        // Connect the selection change signal to update the button states
+        connect(list_widget, &QListWidget::itemSelectionChanged, this, &DockListDialog::updateButtonStates);
+
         // Populate the list initially
         updateDockList();
+
+        // Initialize the buttons' states
+        updateButtonStates();
     }
 
 private slots:
@@ -81,7 +97,7 @@ private slots:
     {
         list_widget->clear();
 
-        QSettings settings("OBS", "DockLayouts");
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
 
         QStringList layoutNames = settings.childGroups();
 
@@ -92,16 +108,36 @@ private slots:
 
         for (const QString &name : layoutNames) {
             if (name == "Settings") continue; // Skip the Settings group
-            QString displayName = name;
+            QListWidgetItem *item = new QListWidgetItem(name, list_widget);
+
             if (name == defaultLayoutName) {
-                displayName += " (Default)";
+                // Set the font to bold to indicate default
+                QFont boldFont = item->font();
+                boldFont.setBold(true);
+                item->setFont(boldFont);
+
+                // Optionally, set a tooltip to indicate default
+                item->setToolTip("Default layout");
             }
-            list_widget->addItem(displayName);
+
+            list_widget->addItem(item);
         }
 
         if (layoutNames.isEmpty() || (layoutNames.size() == 1 && layoutNames.contains("Settings"))) {
-            list_widget->addItem("No saved layouts");
+            QListWidgetItem *noLayoutItem = new QListWidgetItem("No saved layouts", list_widget);
+            noLayoutItem->setFlags(noLayoutItem->flags() & ~Qt::ItemIsSelectable);
         }
+    }
+
+    void updateButtonStates()
+    {
+        QListWidgetItem *currentItem = list_widget->currentItem();
+        bool validSelection = currentItem && currentItem->text() != "No saved layouts";
+
+        saveButton->setEnabled(validSelection);
+        restoreButton->setEnabled(validSelection);
+        deleteButton->setEnabled(validSelection);
+        setDefaultButton->setEnabled(validSelection);
     }
 
     void saveDockLayout()
@@ -114,24 +150,50 @@ private slots:
             return;
         }
 
-        bool ok;
-        QString layoutName = QInputDialog::getText(this, "Save Dock Layout", "Enter a name for the layout:", QLineEdit::Normal, "", &ok);
+        QListWidgetItem *currentItem = list_widget->currentItem();
+        QString layoutName;
 
-        if (!ok || layoutName.isEmpty()) {
-            return; // User cancelled or empty name
+        if (currentItem && currentItem->text() != "No saved layouts") {
+            layoutName = currentItem->text();
+
+            layoutName = layoutName.trimmed(); // Remove any extra whitespace
+
+            // Confirm overwrite
+            QMessageBox::StandardButton reply;
+            reply = QMessageBox::question(this, "Overwrite Layout", QString("Are you sure you want to overwrite the layout '%1'?").arg(layoutName),
+                                        QMessageBox::Yes | QMessageBox::No);
+
+            if (reply != QMessageBox::Yes) {
+                return;
+            }
+
+            QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+            // Remove existing layout
+            settings.remove(layoutName);
+
+            // Now proceed to save the new layout
+            QByteArray windowState = main_window->saveState();
+
+            if (windowState.isEmpty()) {
+                QMessageBox::warning(this, "Error", "Failed to save window state. Ensure that the main window state is valid.");
+                return;
+            }
+
+            settings.beginGroup(layoutName);
+            settings.setValue("WindowState", windowState);
+            settings.endGroup(); // layoutName
+
+            settings.sync(); // Ensure changes are written to disk
+
+            QMessageBox::information(this, "Success", QString("Dock layout '%1' saved successfully").arg(layoutName));
+
+            updateDockList(); // Update the list to reflect changes
+        } else {
+            // No layout selected, prompt the user to select a layout
+            QMessageBox::information(this, "No Layout Selected", "Please select an existing layout to overwrite.");
+            return;
         }
-
-        QByteArray windowState = main_window->saveState();
-
-        QSettings settings("OBS", "DockLayouts");
-        settings.beginGroup(layoutName);
-        settings.setValue("WindowState", windowState);
-        settings.endGroup();
-        settings.sync(); // Ensure changes are written to disk
-
-        QMessageBox::information(this, "Success", "Dock layout saved successfully");
-
-        updateDockList(); // Update the list to include the new layout
     }
 
     void restoreDockLayout()
@@ -158,23 +220,18 @@ private slots:
             return;
         }
 
-        // Remove "(Default)" from the name if present
-        if (layoutName.endsWith(" (Default)")) {
-            layoutName.chop(9); // Remove last 9 characters
-        }
-
-        QSettings settings("OBS", "DockLayouts");
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
         settings.beginGroup(layoutName);
         QByteArray windowState = settings.value("WindowState").toByteArray();
         settings.endGroup();
 
-        if (windowState.isEmpty()) {
-            QMessageBox::warning(this, "Error", "Failed to retrieve the saved layout");
-            return;
-        }
-
-        if (!main_window->restoreState(windowState)) {
-            QMessageBox::warning(this, "Error", "Failed to restore dock layout");
+        if (!windowState.isEmpty()) {
+            if (!main_window->restoreState(windowState)) {
+                QMessageBox::warning(this, "Error", "Failed to restore dock layout");
+                return;
+            }
+        } else {
+            QMessageBox::warning(this, "Error", "Selected layout does not contain valid window state");
             return;
         }
 
@@ -197,11 +254,6 @@ private slots:
             return;
         }
 
-        // Remove "(Default)" from the name if present
-        if (layoutName.endsWith(" (Default)")) {
-            layoutName.chop(9); // Remove last 9 characters
-        }
-
         QMessageBox::StandardButton reply;
         reply = QMessageBox::question(this, "Delete Layout", QString("Are you sure you want to delete the layout '%1'?").arg(layoutName),
                                       QMessageBox::Yes | QMessageBox::No);
@@ -210,7 +262,7 @@ private slots:
             return;
         }
 
-        QSettings settings("OBS", "DockLayouts");
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
 
         // Check if the deleted layout is the default
         settings.beginGroup("Settings");
@@ -246,12 +298,31 @@ private slots:
             return;
         }
 
-        // Remove "(Default)" from the name if present
-        if (layoutName.endsWith(" (Default)")) {
-            layoutName.chop(9); // Remove last 9 characters
+        // Save the current window state to the selected layout
+        void *main_window_handle = obs_frontend_get_main_window();
+        QMainWindow *main_window = static_cast<QMainWindow *>(main_window_handle);
+
+        if (!main_window) {
+            QMessageBox::warning(this, "Error", "Failed to get main window");
+            return;
         }
 
-        QSettings settings("OBS", "DockLayouts");
+        QByteArray windowState = main_window->saveState();
+
+        if (windowState.isEmpty()) {
+            QMessageBox::warning(this, "Error", "Failed to save window state. Ensure that the main window state is valid.");
+            return;
+        }
+
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+        settings.beginGroup(layoutName);
+        settings.setValue("WindowState", windowState);
+        settings.endGroup(); // layoutName
+
+        settings.sync(); // Ensure changes are written to disk
+
+        // Now set this layout as the default
         settings.beginGroup("Settings");
         settings.setValue("DefaultLayout", layoutName);
         settings.endGroup();
@@ -262,8 +333,45 @@ private slots:
         updateDockList();
     }
 
+    void newDockLayout()
+    {
+        bool ok;
+        QString newLayoutName = QInputDialog::getText(this, "New Dock Layout", "Enter a name for the new layout:", QLineEdit::Normal, "", &ok);
+
+        if (!ok || newLayoutName.isEmpty()) {
+            return; // User cancelled or entered an empty name
+        }
+
+        newLayoutName = newLayoutName.trimmed(); // Remove any extra whitespace
+
+        QSettings settings(settingsFilePath, QSettings::IniFormat);
+
+        // Check if a layout with this name already exists
+        QStringList existingLayouts = settings.childGroups();
+        existingLayouts.removeAll("Settings"); // Exclude the Settings group
+        if (existingLayouts.contains(newLayoutName)) {
+            QMessageBox::warning(this, "Error", QString("A layout with the name '%1' already exists. Please choose a different name.").arg(newLayoutName));
+            return;
+        }
+
+        // FIX: Create a new layout group and initialize it with an empty WindowState
+        settings.beginGroup(newLayoutName);
+        settings.setValue("WindowState", QByteArray()); // Initialize with empty WindowState
+        settings.endGroup();
+
+        settings.sync(); // Ensure changes are written to disk
+
+        QMessageBox::information(this, "Success", QString("New layout '%1' created successfully").arg(newLayoutName));
+
+        updateDockList();
+    }
+
 private:
     QListWidget *list_widget;
+    QPushButton *saveButton;       // Member variable for "Save Dock Layout"
+    QPushButton *restoreButton;    // Member variable for "Restore Dock Layout"
+    QPushButton *deleteButton;     // Member variable for "Delete Dock Layout"
+    QPushButton *setDefaultButton; // Member variable for "Set as Default"
 };
 
 #include "plugin-main.moc"
@@ -282,7 +390,7 @@ void restore_default_layout()
         return;
     }
 
-    QSettings settings("OBS", "DockLayouts");
+    QSettings settings(settingsFilePath, QSettings::IniFormat);
     settings.beginGroup("Settings");
     QString defaultLayoutName = settings.value("DefaultLayout").toString();
     settings.endGroup();
@@ -296,13 +404,13 @@ void restore_default_layout()
     QByteArray windowState = settings.value("WindowState").toByteArray();
     settings.endGroup();
 
-    if (windowState.isEmpty()) {
-        blog(LOG_WARNING, "Default layout '%s' not found", defaultLayoutName.toUtf8().constData());
-        return;
-    }
-
-    if (!main_window->restoreState(windowState)) {
-        blog(LOG_WARNING, "Failed to restore default dock layout '%s'", defaultLayoutName.toUtf8().constData());
+    if (!windowState.isEmpty()) {
+        if (!main_window->restoreState(windowState)) {
+            blog(LOG_WARNING, "Failed to restore default dock layout '%s'", defaultLayoutName.toUtf8().constData());
+            return;
+        }
+    } else {
+        blog(LOG_WARNING, "Default layout '%s' does not contain valid window state", defaultLayoutName.toUtf8().constData());
         return;
     }
 
@@ -314,7 +422,7 @@ void on_frontend_event(enum obs_frontend_event event, void *private_data)
 {
     if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
         // Delay the restoration to ensure all docks are loaded
-        QTimer::singleShot(2000, restore_default_layout); // Delay of 2000 milliseconds (2 seconds)
+        QTimer::singleShot(500, restore_default_layout); // Delay of 500 milliseconds
     }
 }
 
@@ -339,6 +447,22 @@ void show_dock_layout_manager(void *)
 
 bool obs_module_load(void)
 {
+    // FIX: Ensure the settings file path includes the .ini extension
+    const char *moduleFilePathCStr = obs_get_module_file_name(obs_current_module());
+    QString moduleFilePath = QString::fromUtf8(moduleFilePathCStr);
+    QFileInfo moduleFileInfo(moduleFilePath);
+    QString moduleDir = moduleFileInfo.absolutePath();
+    settingsFilePath = QDir::cleanPath(moduleDir + QDir::separator() + "obs-auto-dock-profiles.ini"); // Added .ini extension
+
+    // Log the settings file path
+    blog(LOG_INFO, "Settings file path: %s", settingsFilePath.toUtf8().constData());
+
+    // Ensure the settings file exists
+    QDir dir(moduleDir);
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
+
     // Add the plugin to the Tools menu
     obs_frontend_push_ui_translation(obs_module_get_string);
     obs_frontend_add_tools_menu_item("Dock Layout Manager", show_dock_layout_manager, nullptr);
