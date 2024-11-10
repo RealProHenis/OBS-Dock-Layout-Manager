@@ -10,4 +10,4 @@ A plugin for OBS Studio that resizes dock dimensions to preset values.
    - Optional: If you want a dock layout to automatically apply on OBS startup, select the dock profile, and click 'Set as Default'.
 
 ## Why does this plugin exist?
-I created this plugin because OBS Studio always opens in a windowed state, and I prefer to maximize it on my my second monitor. This means I have to manually set the size of each dock every time I open OBS Studio. I figured it'd be great if I could maximize OBS, press 1 button, and have every dock change to the dimensions I want.
+I created this plugin because OBS Studio always resets dock sizes every time I open the program. This means I have to manually set the size of each dock every time I open OBS Studio. Not anymore :)
