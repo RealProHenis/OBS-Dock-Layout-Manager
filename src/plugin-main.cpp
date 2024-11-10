@@ -28,7 +28,7 @@ OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE("obs-auto-dock-resizer", "en-US")
 
 #define PLUGIN_NAME "OBS Auto Dock Resizer"
-#define PLUGIN_VERSION "1.1.3" // Update in 'buildspec.json' too
+#define PLUGIN_VERSION "1.1.4" // Update in 'buildspec.json' too
 
 static QString settingsFilePath; // Global variable for settings file path
 
