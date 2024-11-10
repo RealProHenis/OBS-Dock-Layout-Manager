@@ -56,28 +56,34 @@ public:
         // Add a horizontal layout for the buttons
         QHBoxLayout *buttonLayout = new QHBoxLayout;
 
-        // Initialize buttons and add to layout
+        // Initialize buttons and add to layout with tooltips
         QPushButton *newButton = new QPushButton("New", this);
+        newButton->setToolTip("Create a new dock layout");
         connect(newButton, &QPushButton::clicked, this, &DockListDialog::newDockLayout);
         buttonLayout->addWidget(newButton);
 
         saveButton = new QPushButton("Save", this);
+        saveButton->setToolTip("Save the current dock layout");
         connect(saveButton, &QPushButton::clicked, this, &DockListDialog::saveDockLayout);
         buttonLayout->addWidget(saveButton);
 
         restoreButton = new QPushButton("Restore", this);
+        restoreButton->setToolTip("Restore the selected dock layout");
         connect(restoreButton, &QPushButton::clicked, this, &DockListDialog::restoreDockLayout);
         buttonLayout->addWidget(restoreButton);
 
         renameButton = new QPushButton("Rename", this);
+        renameButton->setToolTip("Rename the selected dock layout");
         connect(renameButton, &QPushButton::clicked, this, &DockListDialog::renameDockLayout);
         buttonLayout->addWidget(renameButton);
 
         deleteButton = new QPushButton("Delete", this);
+        deleteButton->setToolTip("Delete the selected dock layout");
         connect(deleteButton, &QPushButton::clicked, this, &DockListDialog::deleteDockLayout);
         buttonLayout->addWidget(deleteButton);
 
         setDefaultButton = new QPushButton("Set as Default", this);
+        setDefaultButton->setToolTip("Automatically apply the selected dock layout at startup");
         connect(setDefaultButton, &QPushButton::clicked, this, &DockListDialog::setAsDefaultLayout);
         buttonLayout->addWidget(setDefaultButton);
 
@@ -172,7 +178,7 @@ private slots:
             // Confirm overwrite
             QMessageBox::StandardButton reply;
             reply = QMessageBox::question(this, "Overwrite Layout",
-                                        QString("Are you sure you want to overwrite the '%1' layout?").arg(layoutName),
+                                        QString("Are you sure you want to overwrite the '%1' layout with the current dock sizes & positions?").arg(layoutName),
                                         QMessageBox::Yes | QMessageBox::No);
 
             if (reply != QMessageBox::Yes) {
