@@ -1,5 +1,6 @@
 # OBS Dock Layout Manager
 A plugin for OBS Studio that saves each dock's position and size, to easily switch to depending on desired layout.
+*Tested & working on OBS 30.2.3*
 
 ## How To Use:
 1. After installing the plugin, open OBS Studio.
