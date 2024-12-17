@@ -13,4 +13,4 @@ A plugin for OBS Studio that saves each dock's position and size, to easily swit
    - Optional: If you want a dock layout to automatically apply on OBS startup, select the layout, and click 'Set as Default'.
 
 ## Why does this plugin exist?
-I created this plugin because OBS Studio resets dock sizes every time I open the program, regardless of what I set them to before last closing. This means I have to manually set the size of each dock every time I re-open OBS Studio. Now, I can save dock layout presets, and set one as default to automatically be applied every time I open OBS.
+I created this plugin because OBS Studio resets dock sizes every time I open the program, regardless of what I set them to before last closing. This means I have to manually set the size of each dock every time I re-open OBS Studio. With this plugin, I can save dock layout presets, and set one as default to automatically be applied every time I open OBS.
